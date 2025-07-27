@@ -1,0 +1,79 @@
+diff --git a/node_modules/prismarine-auth/src/TokenManagers/LiveTokenManager.js b/node_modules/prismarine-auth/src/TokenManagers/LiveTokenManager.js
+index 062b3c0..7c714ec 100644
+--- a/node_modules/prismarine-auth/src/TokenManagers/LiveTokenManager.js
++++ b/node_modules/prismarine-auth/src/TokenManagers/LiveTokenManager.js
+@@ -1,5 +1,5 @@
+ const debug = require('debug')('prismarine-auth')
+-
++const fetch = require('electron-fetch').default;
+ const { Endpoints } = require('../common/Constants')
+ const { checkStatus } = require('../common/Util')
+ 
+diff --git a/node_modules/prismarine-auth/src/TokenManagers/MinecraftBedrockServicesManager.js b/node_modules/prismarine-auth/src/TokenManagers/MinecraftBedrockServicesManager.js
+index 06f9ed7..e0d168f 100644
+--- a/node_modules/prismarine-auth/src/TokenManagers/MinecraftBedrockServicesManager.js
++++ b/node_modules/prismarine-auth/src/TokenManagers/MinecraftBedrockServicesManager.js
+@@ -1,5 +1,5 @@
+ const debug = require('debug')('prismarine-auth')
+-
++const fetch = require('electron-fetch').default;
+ const { Endpoints } = require('../common/Constants')
+ const { checkStatus } = require('../common/Util')
+ 
+diff --git a/node_modules/prismarine-auth/src/TokenManagers/MinecraftBedrockTokenManager.js b/node_modules/prismarine-auth/src/TokenManagers/MinecraftBedrockTokenManager.js
+index 9c5036e..a91a61d 100644
+--- a/node_modules/prismarine-auth/src/TokenManagers/MinecraftBedrockTokenManager.js
++++ b/node_modules/prismarine-auth/src/TokenManagers/MinecraftBedrockTokenManager.js
+@@ -1,5 +1,5 @@
+ const debug = require('debug')('prismarine-auth')
+-
++const fetch = require('electron-fetch').default;
+ const { Endpoints } = require('../common/Constants')
+ const { checkStatus } = require('../common/Util')
+ 
+diff --git a/node_modules/prismarine-auth/src/TokenManagers/MinecraftJavaTokenManager.js b/node_modules/prismarine-auth/src/TokenManagers/MinecraftJavaTokenManager.js
+index c89e8f1..79df714 100644
+--- a/node_modules/prismarine-auth/src/TokenManagers/MinecraftJavaTokenManager.js
++++ b/node_modules/prismarine-auth/src/TokenManagers/MinecraftJavaTokenManager.js
+@@ -1,6 +1,6 @@
+ const debug = require('debug')('prismarine-auth')
+ const crypto = require('crypto')
+-
++const fetch = require('electron-fetch').default;
+ const { Endpoints, fetchOptions } = require('../common/Constants')
+ const { checkStatus } = require('../common/Util')
+ 
+diff --git a/node_modules/prismarine-auth/src/TokenManagers/MsaTokenManager.js b/node_modules/prismarine-auth/src/TokenManagers/MsaTokenManager.js
+index 568385d..fb24dd6 100644
+--- a/node_modules/prismarine-auth/src/TokenManagers/MsaTokenManager.js
++++ b/node_modules/prismarine-auth/src/TokenManagers/MsaTokenManager.js
+@@ -1,6 +1,6 @@
+ const msal = require('@azure/msal-node')
+ const debug = require('debug')('prismarine-auth')
+-
++const fetch = require('electron-fetch').default;
+ class MsaTokenManager {
+   constructor (msalConfig, scopes, cache) {
+     this.msaClientId = msalConfig.auth.clientId
+diff --git a/node_modules/prismarine-auth/src/TokenManagers/PlayfabTokenManager.js b/node_modules/prismarine-auth/src/TokenManagers/PlayfabTokenManager.js
+index 3ba041f..4eca82c 100644
+--- a/node_modules/prismarine-auth/src/TokenManagers/PlayfabTokenManager.js
++++ b/node_modules/prismarine-auth/src/TokenManagers/PlayfabTokenManager.js
+@@ -1,5 +1,5 @@
+ const debug = require('debug')('prismarine-auth')
+-
++const fetch = require('electron-fetch').default;
+ const { Endpoints } = require('../common/Constants')
+ 
+ class PlayfabTokenManager {
+diff --git a/node_modules/prismarine-auth/src/TokenManagers/XboxTokenManager.js b/node_modules/prismarine-auth/src/TokenManagers/XboxTokenManager.js
+index dd79fd5..fc6e5ad 100644
+--- a/node_modules/prismarine-auth/src/TokenManagers/XboxTokenManager.js
++++ b/node_modules/prismarine-auth/src/TokenManagers/XboxTokenManager.js
+@@ -1,5 +1,5 @@
+ const crypto = require('crypto')
+-
++const fetch = require('electron-fetch').default;
+ const XboxLiveAuth = require('@xboxreplay/xboxlive-auth')
+ const debug = require('debug')('prismarine-auth')
+ const { SmartBuffer } = require('smart-buffer')
