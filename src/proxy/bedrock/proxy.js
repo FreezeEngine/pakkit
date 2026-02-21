@@ -4,8 +4,8 @@ const minecraftFolder = require("minecraft-folder-path");
 
 let scriptingEnabled = false
 
-// http://prismarinejs.github.io/minecraft-data/?v=bedrock_1.19.62&d=protocol#packet_server_to_client_handshake
-// http://prismarinejs.github.io/minecraft-data/?v=bedrock_[VERSION]&d=protocol#[PACKET]
+// https://prismarinejs.github.io/minecraft-data/?v=bedrock_{VERSION}&d=protocol#packet_{packet_name}
+// Example: https://prismarinejs.github.io/minecraft-data/?v=bedrock_1.21.130&d=protocol#packet_correct_player_move_prediction
 
 exports.capabilities = {
   modifyPackets: true,
@@ -14,7 +14,7 @@ exports.capabilities = {
   scriptingSupport: true,
   clientboundPackets: {},
   serverboundPackets: {},
-  wikiVgPage: 'https://wiki.vg/Bedrock_Protocol',
+  wikiVgPage: undefined, // Set in startProxy with version-specific prismarinejs URL
   versionId: undefined
 }
 
@@ -81,8 +81,7 @@ exports.startProxy = function (passedHost, passedPort, passedListenPort, version
   exports.capabilities.clientboundPackets = toClientMappings
   exports.capabilities.serverboundPackets = toServerMappings
 
-  // TODO: minecraft-data docs should replace wikiVgPage
-  //exports.capabilities.wikiVgPage = "http://prismarinejs.github.io/minecraft-data/?v=bedrock_{VERSION}&d=protocol".replace("{VERSION}", version)
+  exports.capabilities.wikiVgPage = 'https://prismarinejs.github.io/minecraft-data/?v=bedrock_' + version + '&d=protocol'
 
   exports.capabilities.versionId = 'node-bedrock-protocol-' + version.split('.').join('-')
 
