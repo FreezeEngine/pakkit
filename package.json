@@ -43,28 +43,24 @@
     "electron-rebuild": "^2.3.4"
   },
   "dependencies": {
-    "axios": "^0.21.1",
+    "axios": "^1.19.0",
     "bedrock-protocol": "^3.52.0",
     "clusterize.js": "^0.18.1",
     "commander": "^7.1.0",
+    "electron-fetch": "1.9.1",
     "electron-localshortcut": "^3.2.1",
     "electron-squirrel-startup": "^1.0.0",
     "electron-store": "^8.0.1",
     "electron-unhandled": "^3.0.2",
     "electron-window-state": "^5.0.3",
-    "electron-fetch": "1.9.1",
     "escape-html": "^1.0.3",
     "md5-file": "^5.0.0",
-    "minecraft-data": "^3.102.2",
+    "minecraft-data": "3.112.0",
     "minecraft-folder-path": "^1.2.0",
-    "minecraft-protocol": "^1.62.0",
+    "minecraft-protocol": "1.66.2",
     "node-eval": "^2.0.0",
-    "patch-package": "^6.4.7",
+    "patch-package": "^8.0.1",
     "source-map-support": "^0.5.19",
-    "ws": "^7.4.6"
-  },
-  "optionalDependencies": {
-    "bufferutil": "^4.0.2",
-    "utf-8-validate": "^5.0.3"
+    "ws": "^7.5.13"
   }
 }

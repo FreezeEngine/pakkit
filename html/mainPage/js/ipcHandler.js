@@ -5,15 +5,22 @@ exports.setup = function (passedSharedVars) {
 
   sharedVars.ipcRenderer.on('copyPacketData', (event, arg) => {
     const ipcMessage = JSON.parse(arg)
-    let data = sharedVars.allPackets[ipcMessage.id].data
-    data = sharedVars.proxyCapabilities.jsonData ? JSON.stringify(data, null, 2) : data.data
+    const packet = sharedVars.allPackets[Number(ipcMessage.id)]
+    if (!packet) return
+    const data = sharedVars.proxyCapabilities.jsonData
+      ? sharedVars.packetDom.serializeData(packet.data, 2)
+      : packet.data && packet.data.data !== undefined
+        ? String(packet.data.data)
+        : ''
     sharedVars.ipcRenderer.send('copyToClipboard', data)
   })
 
   sharedVars.ipcRenderer.on('copyHexData', (event, arg) => {
     const ipcMessage = JSON.parse(arg)
     let data = ''
-    for (const byte of sharedVars.allPackets[ipcMessage.id].raw) {
+    const packet = sharedVars.allPackets[Number(ipcMessage.id)]
+    if (!packet || !packet.raw) return
+    for (const byte of packet.raw) {
       data += byte.toString(16).padStart(2, '0')
       data += ' '
     }
@@ -24,9 +31,11 @@ exports.setup = function (passedSharedVars) {
   sharedVars.ipcRenderer.on('copyTeleportCommand', (event, arg) => {
     console.log(sharedVars.allPackets)
     const ipcMessage = JSON.parse(arg)
-    const data = sharedVars.allPackets[ipcMessage.id].data
+    const packet = sharedVars.allPackets[Number(ipcMessage.id)]
+    if (!packet || !packet.data) return
+    const data = packet.data
 
-    let clipData = '/tp @p ' + ((datasharedVars.packetsUpdated = false.flags & 0x01) ? '~' : '') + ((data.x === 0 && (data.flags & 0x01)) ? '' : data.x) +
+    let clipData = '/tp @p ' + ((data.flags & 0x01) ? '~' : '') + ((data.x === 0 && (data.flags & 0x01)) ? '' : data.x) +
       ((data.flags & 0x02) ? ' ~' : ' ') + ((data.y === 0 && (data.flags & 0x03)) ? '' : data.y) +
       ((data.flags & 0x04) ? ' ~' : ' ') + ((data.z === 0 && (data.flags & 0x04)) ? '' : data.z)
 
@@ -59,11 +68,125 @@ exports.setup = function (passedSharedVars) {
     window.updateFilteringPackets()
   })
 
-  sharedVars.ipcRenderer.on('loadLogData', (event, arg) => {
-    sharedVars.allPackets = JSON.parse(arg)
-    for (const packet of sharedVars.allPackets) {
-      sharedVars.packetDom.addPacketToDOM(packet)
+  sharedVars.ipcRenderer.on('loadLogStart', (event, request) => {
+    const { requestId, payload } = request
+
+    try {
+      window.activeLoadId = payload.loadId
+      window.loadLogRunning = true
+
+      if (typeof window.deselectPacket === 'function') {
+        window.deselectPacket()
+      }
+
+      sharedVars.allPackets = []
+      sharedVars.allPacketsHTML = []
+      sharedVars.hiddenPacketsAmount = 0
+      sharedVars.packetsUpdated = false
+      if (sharedVars.packetList) {
+        sharedVars.packetList.innerHTML = ''
+      }
+
+      console.log(
+        `Loading log: ${payload.filePath} (${payload.fileSize} bytes)`
+      )
+
+      sharedVars.ipcRenderer.send(
+        `loadLogStart-ack-${requestId}`,
+        {
+          success: true
+        }
+      )
+    } catch (err) {
+      sharedVars.ipcRenderer.send(
+        `loadLogStart-ack-${requestId}`,
+        {
+          error: err.message
+        }
+      )
     }
+  })
+
+  sharedVars.ipcRenderer.on('loadLogChunk', (event, request) => {
+    const { requestId, payload } = request
+
+    try {
+      if (payload.loadId !== window.activeLoadId) {
+        throw new Error('Invalid load session')
+      }
+
+      sharedVars.packetDom.addPackets(payload.packets, true)
+
+      sharedVars.ipcRenderer.send(
+        `loadLogChunk-ack-${requestId}`,
+        {
+          success: true,
+          packetCount: sharedVars.allPackets.length
+        }
+      )
+    } catch (err) {
+      sharedVars.ipcRenderer.send(
+        `loadLogChunk-ack-${requestId}`,
+        {
+          error: err.message
+        }
+      )
+    }
+  })
+
+  sharedVars.ipcRenderer.on('loadLogFinish', (event, request) => {
+    const { requestId, payload } = request
+
+    try {
+      if (payload.loadId !== window.activeLoadId) {
+        throw new Error('Invalid load session')
+      }
+
+      sharedVars.packetDom.refresh()
+
+      console.log(
+        `Loaded ${payload.packetCount} packets`
+      )
+
+      window.activeLoadId = null
+      window.loadLogRunning = false
+
+      sharedVars.ipcRenderer.send(
+        `loadLogFinish-ack-${requestId}`,
+        {
+          success: true
+        }
+      )
+    } catch (err) {
+      sharedVars.ipcRenderer.send(
+        `loadLogFinish-ack-${requestId}`,
+        {
+          error: err.message
+        }
+      )
+    }
+  })
+
+  sharedVars.ipcRenderer.on('loadLogError', (event, payload) => {
+    if (
+      payload.loadId &&
+      window.activeLoadId &&
+      payload.loadId !== window.activeLoadId
+    ) {
+      return
+    }
+
+    window.activeLoadId = null
+    window.loadLogRunning = false
+
+    console.error(
+      'Log load failed:',
+      payload.error
+    )
+
+    alert(
+      `Log load failed: ${payload.error}`
+    )
   })
 
   sharedVars.ipcRenderer.on('loadScriptData', (event, arg) => {
@@ -79,9 +202,9 @@ exports.setup = function (passedSharedVars) {
     document.getElementById('btnScriptSave').title = arg
   })
 
-sharedVars.ipcRenderer.on('disableBtnScriptSave', (event, arg) => {
-  document.getElementById('btnScriptSave').disabled = true
-  document.getElementById('btnScriptSave').title = ''
-})
+  sharedVars.ipcRenderer.on('disableBtnScriptSave', (event, arg) => {
+    document.getElementById('btnScriptSave').disabled = true
+    document.getElementById('btnScriptSave').title = ''
+  })
 
 }

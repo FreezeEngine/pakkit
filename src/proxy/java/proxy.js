@@ -1,32 +1,110 @@
-// Modified from https://github.com/PrismarineJS/node-minecraft-protocol/blob/master/examples/proxy/proxy.js
+// Modified from:
+// https://github.com/PrismarineJS/node-minecraft-protocol/blob/master/examples/proxy/proxy.js
 
 const mc = require('minecraft-protocol')
 const minecraftFolder = require('minecraft-folder-path')
-const {getRaw} = require("../bedrock/proxy");
 
 const states = mc.states
 
+let proxyServer
 let realClient
 let realServer
-let toClientMappings
-let toServerMappings
+let toClientMappings = {}
+let toServerMappings = {}
 let storedCallback
 
 let scriptingEnabled = false
+let authWindowOpen = false
 
-// https://gist.github.com/timoxley/1689041
-function isPortTaken (port, fn) {
+function isPortTaken (port, callback) {
   const net = require('net')
+
   const tester = net.createServer()
-    .once('error', function (err) {
-      if (err.code != 'EADDRINUSE') return fn(err)
-      fn(null, true)
+    .once('error', function (error) {
+      if (error.code !== 'EADDRINUSE') {
+        callback(error)
+        return
+      }
+
+      callback(null, true)
     })
-    .once('listening', function() {
-      tester.once('close', function() { fn(null, false) })
+    .once('listening', function () {
+      tester
+        .once('close', function () {
+          callback(null, false)
+        })
         .close()
     })
     .listen(port)
+}
+
+function isPlayState (state) {
+  return state === states.PLAY || state === 'play'
+}
+
+function isConfigurationState (state) {
+  return state === states.CONFIGURATION || state === 'configuration'
+}
+
+function getMappingId (mappings, packetName) {
+  if (!mappings || typeof packetName !== 'string') {
+    return undefined
+  }
+
+  return Object.keys(mappings)
+    .find(id => mappings[id] === packetName)
+}
+
+function safeCall (callback, ...args) {
+  if (typeof callback === 'function') {
+    try {
+      callback(...args)
+    } catch (error) {
+      if (!String(error && error.message).toLowerCase().includes('destroyed')) {
+        console.error(error)
+      }
+    }
+  }
+}
+
+function createCustomPackets (mcdata) {
+  const majorVersion = mcdata.version && mcdata.version.majorVersion
+  if (!majorVersion) return undefined
+
+  const particleType = mcdata.protocol &&
+    mcdata.protocol.play &&
+    mcdata.protocol.play.toClient &&
+    mcdata.protocol.play.toClient.types &&
+    mcdata.protocol.play.toClient.types.packet_world_particles
+
+  if (!Array.isArray(particleType) || !Array.isArray(particleType[1])) {
+    return undefined
+  }
+
+  const usesParticleRegistry = particleType[1]
+    .some(field => field && field.type === 'Particle')
+
+  if (!usesParticleRegistry) return undefined
+
+  const fields = particleType[1].map((field, index) => ({
+    name: index === 0 ? 'raw' : (field.name || `field${index}`),
+    type: 'restBuffer'
+  }))
+
+  return {
+    [majorVersion]: {
+      play: {
+        toClient: {
+          types: {
+            packet_world_particles: [
+              'container',
+              fields
+            ]
+          }
+        }
+      }
+    }
+  }
 }
 
 exports.capabilities = {
@@ -36,269 +114,802 @@ exports.capabilities = {
   scriptingSupport: true,
   clientboundPackets: [],
   serverboundPackets: [],
-  // TODO: Only for latest, or fetch older pages
   wikiVgPage: 'https://wiki.vg/Protocol',
   versionId: undefined
 }
 
-let authWindowOpen = false
-
-exports.startProxy = function (host, port, listenPort, version, onlineMode, authConsent, callback, messageCallback, dataFolder,
-                               updateFilteringCallback, authCodeCallback) {
+exports.startProxy = function (
+  host,
+  port,
+  listenPort,
+  version,
+  onlineMode,
+  authConsent,
+  callback,
+  messageCallback,
+  dataFolder,
+  updateFilteringCallback,
+  authCodeCallback
+) {
   storedCallback = callback
-  authConsent = false
 
-  // . cannot be in a JSON property name with electron-store
-  exports.capabilities.versionId = 'java-node-minecraft-protocol-' + version.split('.').join('-')
+  port = Number(port)
+  listenPort = Number(listenPort)
 
-  const mcdata = require('minecraft-data')(version) // Used to get packets, may remove if I find a better way
-  toClientMappings = mcdata.protocol.play.toClient.types.packet[1][0].type[1].mappings
-  toServerMappings = mcdata.protocol.play.toServer.types.packet[1][0].type[1].mappings
+  exports.capabilities.versionId =
+    'java-node-minecraft-protocol-' +
+    version.split('.').join('-')
 
-  exports.capabilities.clientboundPackets = mcdata.protocol.play.toClient.types.packet[1][0].type[1].mappings
-  exports.capabilities.serverboundPackets = mcdata.protocol.play.toServer.types.packet[1][0].type[1].mappings
+  const mcdata = require('minecraft-data')(version)
 
-  if (host.indexOf(':') !== -1) {
-    port = host.substring(host.indexOf(':') + 1)
-    host = host.substring(0, host.indexOf(':'))
+  if (!mcdata) {
+    safeCall(
+      messageCallback,
+      'Unable to start pakkit',
+      `Minecraft data is unavailable for version ${version}`,
+      true
+    )
+    return
   }
-  isPortTaken(listenPort, (err, taken) => {
-    // TODO: Handle errors
-    console.log(err, taken)
-    if (taken) {
-      console.log('call')
-      // Wait for the renderer to be ready
-      setTimeout(() => {
-        messageCallback('Unable to start pakkit', 'The port ' + listenPort + ' is in use. ' +
-          'Make sure to close any other instances of pakkit running on the same port or try a different port.', true)
-      }, 1000)
-    } else {
-      let srv
-      try {
-        srv = mc.createServer({
-          'online-mode': false,
-          port: listenPort,
-          keepAlive: false,
-          version: version
-        })
-        console.log('Proxy started (Java)!')
-      } catch (err) {
-        let header = 'Unable to start pakkit'
-        let message = err.message
-        if (err.message.includes('EADDRINUSE')) {
-          message = 'The port ' + listenPort + ' is in use. ' +
-            'Make sure to close any other instances of pakkit running on the same port or try a different port.'
-        }
-        messageCallback(header, message)
-        return
-      }
-      srv.on('login', function (client) {
-        realClient = client
-        const addr = client.socket.remoteAddress
-        console.log('Incoming connection', '(' + addr + ')')
-        let endedClient = false
-        let endedTargetClient = false
-        client.on('end', function () {
-          endedClient = true
-          console.log('Connection closed by client', '(' + addr + ')')
-          if (!endedTargetClient) { targetClient.end('End') }
-        })
-        client.on('error', function (err) {
-          endedClient = true
-          console.log('Connection error by client', '(' + addr + ')')
-          console.log(err.stack)
-          if (!endedTargetClient) { targetClient.end('Error') }
-        })
-        // if (authConsent) {
-        //   console.log('Will attempt to use launcher_profiles.json for online mode login data')
-        // } else {
-        //   console.warn('Consent not given to use launcher_profiles.json - automatic online mode will not work')
-        // }
-        const clientOptions = {
-          host: host,
-          port: port,
-          username: client.username,
-          keepAlive: false,
-          version: version,
-          profilesFolder: authConsent ? minecraftFolder : dataFolder,
-          auth: onlineMode ? 'microsoft' : 'offline',
-          onMsaCode: function (data) {
-            console.log('MSA code:', data.user_code)
-            authWindowOpen = true
-            authCodeCallback(data)
-          }
-        }
-        let targetClient = mc.createClient(clientOptions)
-        targetClient.on('session', function (session) {
-          // Login complete - the dialog can be closed
-          console.log('Login done')
-          authWindowOpen = false
-          authCodeCallback('close')
-        })
 
-        realServer = targetClient
+  const playProtocol = mcdata.protocol &&
+    mcdata.protocol.play
 
-        function getId (meta, mappings) {
-          let id
-          if (typeof meta.name === 'number') {
-            // Unknown packet ID
-            id = '0x' + meta.name.toString(16).padStart(2, '0')
-            meta.name = 'unknown'
-          } else {
-            id = Object.keys(mappings).find(key => mappings[key] === meta.name)
-          }
-          return id
-        }
+  if (!playProtocol) {
+    safeCall(
+      messageCallback,
+      'Unable to start pakkit',
+      `Play protocol data is unavailable for version ${version}`,
+      true
+    )
+    return
+  }
 
-        function handleServerboundPacket (data, meta, raw, packetValid) {
-          // console.log('serverbound packet', meta, data)
-          if (targetClient.state === states.PLAY && meta.state === states.PLAY) {
-            const id = getId(meta, toServerMappings)
+  const clientPacketType =
+    playProtocol.toClient &&
+    playProtocol.toClient.types &&
+    playProtocol.toClient.types.packet &&
+    playProtocol.toClient.types.packet[1] &&
+    playProtocol.toClient.types.packet[1][0] &&
+    playProtocol.toClient.types.packet[1][0].type &&
+    playProtocol.toClient.types.packet[1][0].type[1]
 
-            // Stops standardjs from complaining (no-callback-literal)
-            const direction = 'serverbound'
-            const canUseScripting = true
+  const serverPacketType =
+    playProtocol.toServer &&
+    playProtocol.toServer.types &&
+    playProtocol.toServer.types.packet &&
+    playProtocol.toServer.types.packet[1] &&
+    playProtocol.toServer.types.packet[1][0] &&
+    playProtocol.toServer.types.packet[1][0].type &&
+    playProtocol.toServer.types.packet[1][0].type[1]
 
-            // callback(direction, meta, data, id)
-            if (!endedTargetClient) {
-              // When scripting is enabled, the script sends packets
-              if (!scriptingEnabled) {
-                // targetClient.write(meta.name, data)
-                targetClient.writeRaw(raw)
-              }
-              callback(direction, meta, data, id, canUseScripting, packetValid)
-            }
-          }
-        }
-        function handleClientboundPacket (data, meta, raw, packetValid) {
-          if (meta.state === states.PLAY && client.state === states.PLAY) {
-            const id = getId(meta, toClientMappings)
+  toClientMappings =
+    (clientPacketType && clientPacketType.mappings) || {}
 
-            // Stops standardjs from complaining (no-callback-literal)
-            const direction = 'clientbound'
-            const canUseScripting = true
+  toServerMappings =
+    (serverPacketType && serverPacketType.mappings) || {}
 
-            // callback(direction, meta, data, id)
-            if (!endedClient) {
-              // When scripting is enabled, the script sends packets
-              if (!scriptingEnabled) {
-                // client.write(meta.name, data)
-                client.writeRaw(raw)
-              }
-              callback(direction, meta, data, id, canUseScripting, packetValid)
-              if (meta.name === 'set_compression') {
-                client.compressionThreshold = data.threshold
-              } // Set compression
-            }
-          }
-        }
-        const bufferEqual = require('buffer-equal')
-        targetClient.on('packet', function (data, meta, buffer, fullBuffer) {
-          if (client.state !== states.PLAY || meta.state !== states.PLAY) { return }
+  exports.capabilities.clientboundPackets = toClientMappings
+  exports.capabilities.serverboundPackets = toServerMappings
 
-          let packetValid = false
-          try {
-            const packetBuff = this.getRaw({ name: meta.name, params: data })
-            if (!bufferEqual(fullBuffer, packetBuff)) {
-              console.log('client<-server: Error in packet ' + meta.state + '.' + meta.name)
-              console.log('received buffer', fullBuffer.toString('hex'))
-              console.log('produced buffer', packetBuff.toString('hex'))
-              console.log('received length', fullBuffer.length)
-              console.log('produced length', packetBuff.length)
-            } else {
-              packetValid = true
-            }
-          } catch (e) {
-            // TODO: handle?
-          }
-          handleClientboundPacket(data, meta, fullBuffer, packetValid)
-          /* if (client.state === states.PLAY && brokenPackets.indexOf(packetId.value) !=== -1)
-           {
-           console.log(`client<-server: raw packet);
-           console.log(packetData);
-           if (!endedClient)
-           client.writeRaw(buffer);
-           } */
-        })
-        client.on('packet', function (data, meta, buffer, fullBuffer) {
-          if (meta.state !== states.PLAY || targetClient.state !== states.PLAY) { return }
-          const packetData = client.deserializer.parsePacketBuffer(fullBuffer).data.params
-          let packetValid = false
-          try {
-            const packetBuff = this.getRaw({ name: meta.name, params: packetData })
-            if (!bufferEqual(fullBuffer, packetBuff)) {
-              console.log('client->server: Error in packet ' + meta.state + '.' + meta.name)
-              console.log('received buffer', fullBuffer.toString('hex'))
-              console.log('produced buffer', packetBuff.toString('hex'))
-              console.log('received length', fullBuffer.length)
-              console.log('produced length', packetBuff.length)
-            } else {
-              packetValid = true
-            }
-          } catch (e) {
-            // TODO: handle?
-          }
-          if (typeof meta.name === 'number') {
-            // Unknown packet ID so packet is invalid
-            packetValid = false
-          }
-          handleServerboundPacket(packetData, meta, fullBuffer, packetValid)
-        })
-        targetClient.on('end', function () {
-          endedTargetClient = true
-          console.log('Connection closed by server', '(' + host + ':' + port + ')')
-          if (!endedClient) { client.end('Connection closed by server ' + '(' + host + ':' + port + ')') }
-        })
-        targetClient.on('error', function (err) {
-          endedTargetClient = true
-          console.log('Connection error by server', '(' + host + ':' + port + ') ', err)
-          console.log(err.stack)
-          if (authWindowOpen) return
-          let header = 'Unable to connect to server'
-          let message = err.message
-          if (err.message.includes('ECONNREFUSED')) {
-            message = 'Unable to connect to the Java server at ' +
-              host + ':' + port +
-              '. Make sure the server is online.'
-          }
-          messageCallback(header, message)
-          if (!endedClient) { client.end('pakkit - ' + header + '\n' + message) }
-        })
-      })
+  const customPackets = createCustomPackets(mcdata)
+
+  const separatorIndex = host.lastIndexOf(':')
+
+  if (
+    separatorIndex !== -1 &&
+    host.indexOf(':') === separatorIndex
+  ) {
+    const hostPort = Number(host.substring(separatorIndex + 1))
+
+    if (Number.isFinite(hostPort)) {
+      port = hostPort
+      host = host.substring(0, separatorIndex)
     }
+  }
+
+  isPortTaken(listenPort, function (error, taken) {
+    if (error) {
+      safeCall(
+        messageCallback,
+        'Unable to start pakkit',
+        error.message,
+        true
+      )
+      return
+    }
+
+    if (taken) {
+      safeCall(
+        messageCallback,
+        'Unable to start pakkit',
+        `The port ${listenPort} is in use. ` +
+        'Close other Pakkit instances or choose another port.',
+        true
+      )
+      return
+    }
+
+    try {
+      proxyServer = mc.createServer({
+        'online-mode': false,
+        port: listenPort,
+        keepAlive: false,
+        disableDefaultConfiguration: true,
+        customPackets,
+        hideErrors: true,
+        version
+      })
+    } catch (error) {
+      safeCall(
+        messageCallback,
+        'Unable to start pakkit',
+        error.message,
+        true
+      )
+      return
+    }
+
+    console.log('Proxy started (Java)!')
+
+    proxyServer.on('login', function (client) {
+      realClient = client
+
+      const remoteAddress =
+        client.socket && client.socket.remoteAddress
+
+      console.log(
+        'Incoming connection',
+        `(${remoteAddress || 'unknown'})`
+      )
+
+      let endedClient = false
+      let endedTargetClient = false
+
+      const pendingClientbound = []
+      const pendingServerbound = []
+
+      const MAX_PENDING_CLIENTBOUND = 4096
+      const MAX_PENDING_SERVERBOUND = 512
+
+      const forwardingErrors = new Set()
+
+      const clientOptions = {
+        host,
+        port,
+        username: client.username,
+        keepAlive: false,
+        version,
+        profilesFolder: authConsent
+          ? minecraftFolder
+          : dataFolder,
+        auth: onlineMode
+          ? 'microsoft'
+          : 'offline',
+        customPackets,
+        hideErrors: true,
+
+        onMsaCode: function (data) {
+          authWindowOpen = true
+
+          safeCall(authCodeCallback, data)
+        }
+      }
+
+      const targetClient = mc.createClient(clientOptions)
+
+      realServer = targetClient
+
+      client.on('disconnect', reason => {
+        console.error('Client disconnect packet:', reason)
+      })
+      client.on('kick_disconnect', reason => {
+        console.error('Client kick disconnect:', reason)
+      })
+      targetClient.on('kick_disconnect', reason => {
+        console.error('Server disconnect packet:', reason)
+      })
+      targetClient.on('disconnect', reason => {
+        console.error('Server disconnect:', reason)
+      })
+
+      function bothSidesReady () {
+        return !endedClient &&
+          !endedTargetClient &&
+          isPlayState(client.state) &&
+          isPlayState(targetClient.state)
+      }
+
+      function enqueuePacket (
+        queue,
+        maxSize,
+        data,
+        meta,
+        raw
+      ) {
+        if (queue.length >= maxSize) {
+          queue.shift()
+        }
+
+        queue.push({
+          data,
+          meta: Object.assign({}, meta),
+          raw
+        })
+      }
+
+      function reportForwardingError (
+        direction,
+        meta,
+        error
+      ) {
+        const packetName =
+          meta && meta.name !== undefined
+            ? meta.name
+            : 'unknown'
+
+        const state =
+          meta && meta.state !== undefined
+            ? meta.state
+            : 'unknown'
+
+        const key =
+          `${direction}:${state}:${packetName}`
+
+        if (forwardingErrors.has(key)) {
+          return
+        }
+
+        forwardingErrors.add(key)
+
+        console.error(
+          `Failed to forward ${key}: ${error.message}`
+        )
+      }
+
+      function forwardPacket (
+        destination,
+        meta,
+        data,
+        direction,
+        raw
+      ) {
+        if (!destination || !meta) {
+          return false
+        }
+
+        if (typeof meta.name !== 'string') {
+          return false
+        }
+
+        try {
+          if (raw) {
+            destination.writeRaw(raw)
+          } else {
+            destination.write(meta.name, data)
+          }
+          return true
+        } catch (error) {
+          reportForwardingError(
+            direction,
+            meta,
+            error
+          )
+
+          return false
+        }
+      }
+
+      function notifyPacket (
+        direction,
+        meta,
+        data,
+        mappings,
+        raw
+      ) {
+        const id = typeof meta.name === 'number'
+          ? `0x${meta.name.toString(16).padStart(2, '0')}`
+          : getMappingId(mappings, meta.name)
+
+        safeCall(
+          callback,
+          direction,
+          meta,
+          data,
+          id,
+          true,
+          true,
+          raw
+        )
+      }
+
+      function handleServerboundPacket (
+        data,
+        meta,
+        fromQueue,
+        raw
+      ) {
+        if (
+          !meta ||
+          (!isPlayState(meta.state) &&
+            !isConfigurationState(meta.state))
+        ) {
+          return
+        }
+
+        if (endedTargetClient) {
+          return
+        }
+
+        if (isPlayState(meta.state) && !bothSidesReady()) {
+          if (!fromQueue) {
+            enqueuePacket(
+              pendingServerbound,
+              MAX_PENDING_SERVERBOUND,
+              data,
+              meta,
+              raw
+            )
+          }
+
+          return
+        }
+
+        if (isConfigurationState(meta.state)) {
+          const handledByTargetClient = new Set([
+            'select_known_packs',
+            'finish_configuration',
+            'accept_code_of_conduct'
+          ])
+
+          if (handledByTargetClient.has(meta.name)) {
+            return
+          }
+
+          if (!isConfigurationState(targetClient.state)) {
+            if (!fromQueue) {
+              enqueuePacket(
+                pendingServerbound,
+                MAX_PENDING_SERVERBOUND,
+                data,
+                meta,
+                raw
+              )
+            }
+            return
+          }
+        }
+
+        if (!scriptingEnabled) {
+          const forwarded = forwardPacket(
+            targetClient,
+            meta,
+            data,
+            'serverbound',
+            isPlayState(meta.state) ? raw : undefined
+          )
+
+          if (!forwarded) {
+            return
+          }
+        }
+
+        if (isPlayState(meta.state)) {
+          notifyPacket('serverbound', meta, data, toServerMappings, raw)
+        }
+      }
+
+      function handleClientboundPacket (
+        data,
+        meta,
+        fromQueue,
+        raw
+      ) {
+        if (
+          !meta ||
+          (!isConfigurationState(meta.state) &&
+            !isPlayState(meta.state))
+        ) {
+          return
+        }
+
+        if (endedClient) {
+          return
+        }
+
+        if (isPlayState(meta.state) && !bothSidesReady()) {
+          if (!fromQueue) {
+            enqueuePacket(
+              pendingClientbound,
+              MAX_PENDING_CLIENTBOUND,
+              data,
+              meta,
+              raw
+            )
+          }
+
+          return
+        }
+
+        if (!scriptingEnabled) {
+          const forwarded = forwardPacket(
+            client,
+            meta,
+            data,
+            'clientbound',
+            raw
+          )
+
+          if (!forwarded) {
+            return
+          }
+        }
+
+        if (isPlayState(meta.state)) {
+          notifyPacket('clientbound', meta, data, toClientMappings, raw)
+        }
+      }
+
+      function flushPendingPackets () {
+        while (bothSidesReady() && pendingClientbound.length > 0) {
+          const packet = pendingClientbound.shift()
+
+          handleClientboundPacket(
+            packet.data,
+            packet.meta,
+            true,
+            packet.raw
+          )
+        }
+
+        const pendingCount = pendingServerbound.length
+        for (let i = 0; i < pendingCount; i++) {
+          const packet = pendingServerbound.shift()
+
+          const ready = isPlayState(packet.meta.state)
+            ? bothSidesReady()
+            : isConfigurationState(targetClient.state)
+
+          if (!ready) {
+            pendingServerbound.push(packet)
+            continue
+          }
+
+          handleServerboundPacket(
+            packet.data,
+            packet.meta,
+            true,
+            packet.raw
+          )
+        }
+      }
+
+      const readinessTimer = setInterval(function () {
+        if (endedClient || endedTargetClient) {
+          clearInterval(readinessTimer)
+          return
+        }
+
+        flushPendingPackets()
+      }, 10)
+
+      if (
+        typeof readinessTimer.unref === 'function'
+      ) {
+        readinessTimer.unref()
+      }
+
+      client.on('packet', function (data, meta, buffer, fullBuffer) {
+        handleServerboundPacket(
+          data,
+          meta,
+          false,
+          fullBuffer || buffer
+        )
+      })
+
+      targetClient.on(
+        'packet',
+        function (data, meta, buffer, fullBuffer) {
+          handleClientboundPacket(
+            data,
+            meta,
+            false,
+            fullBuffer || buffer
+          )
+        }
+      )
+
+      targetClient.on('session', function () {
+        authWindowOpen = false
+
+        safeCall(authCodeCallback, 'close')
+      })
+
+      client.on('end', function () {
+        if (endedClient) {
+          return
+        }
+
+        endedClient = true
+        clearInterval(readinessTimer)
+
+        pendingClientbound.length = 0
+        pendingServerbound.length = 0
+
+        console.log(
+          'Connection closed by client',
+          `(${remoteAddress || 'unknown'})`
+        )
+
+        if (!endedTargetClient) {
+          try {
+            targetClient.end('End')
+          } catch (error) {}
+        }
+      })
+
+      client.on('error', function (error) {
+        if (endedClient) {
+          return
+        }
+
+        endedClient = true
+        clearInterval(readinessTimer)
+
+        pendingClientbound.length = 0
+        pendingServerbound.length = 0
+
+        console.error(
+          'Connection error by client:',
+          error.message
+        )
+
+        if (!endedTargetClient) {
+          try {
+            targetClient.end('Error')
+          } catch (endError) {}
+        }
+      })
+
+      targetClient.on('end', function () {
+        if (endedTargetClient) {
+          return
+        }
+
+        endedTargetClient = true
+        clearInterval(readinessTimer)
+
+        pendingClientbound.length = 0
+        pendingServerbound.length = 0
+
+        console.log(
+          'Connection closed by server',
+          `(${host}:${port})`
+        )
+
+        if (!endedClient) {
+          try {
+            client.end(
+              `Connection closed by server (${host}:${port})`
+            )
+          } catch (error) {}
+        }
+      })
+
+      targetClient.on('error', function (error) {
+        if (endedTargetClient) {
+          return
+        }
+
+        endedTargetClient = true
+        clearInterval(readinessTimer)
+
+        pendingClientbound.length = 0
+        pendingServerbound.length = 0
+
+        console.error(
+          `Connection error by server (${host}:${port}):`,
+          error.message
+        )
+
+        if (authWindowOpen) {
+          return
+        }
+
+        let message = error.message
+
+        if (
+          error.message &&
+          error.message.includes('ECONNREFUSED')
+        ) {
+          message =
+            `Unable to connect to ${host}:${port}. ` +
+            'Make sure the server is online.'
+        }
+
+        safeCall(
+          messageCallback,
+          'Unable to connect to server',
+          message,
+          true
+        )
+
+        if (!endedClient) {
+          try {
+            client.end(
+              'pakkit - Unable to connect to server\n' +
+              message
+            )
+          } catch (endError) {}
+        }
+      })
+    })
+
+    proxyServer.on('error', function (error) {
+      safeCall(
+        messageCallback,
+        'Pakkit proxy error',
+        error.message,
+        true
+      )
+    })
   })
 }
 
-exports.end = function () {}
-
-exports.getRaw = function (name, params) {
+exports.end = function () {
   if (realClient) {
-    return [...realClient.serializer.createPacketBuffer({ name, params })]
+    try {
+      realClient.end('Proxy stopped')
+    } catch (error) {}
+
+    realClient = undefined
+  }
+
+  if (realServer) {
+    try {
+      realServer.end('Proxy stopped')
+    } catch (error) {}
+
+    realServer = undefined
+  }
+
+  if (proxyServer) {
+    try {
+      if (
+        typeof proxyServer.close === 'function'
+      ) {
+        proxyServer.close()
+      } else if (
+        proxyServer.socketServer &&
+        typeof proxyServer.socketServer.close === 'function'
+      ) {
+        proxyServer.socketServer.close()
+      }
+    } catch (error) {}
+
+    proxyServer = undefined
   }
 }
 
-exports.writeToClient = function (meta, data, noCallback) {
+exports.getRaw = function (
+  direction,
+  name,
+  params
+) {
+  const connection =
+    direction === 'serverbound'
+      ? realServer
+      : realClient
+
+  if (
+    !connection ||
+    !connection.serializer
+  ) {
+    return undefined
+  }
+
+  try {
+    return connection.serializer
+      .createPacketBuffer({
+        name,
+        params
+      })
+  } catch (error) {
+    return undefined
+  }
+}
+
+exports.writeToClient = function (
+  meta,
+  data,
+  noCallback
+) {
+  if (!realClient) {
+    return false
+  }
+
   if (typeof meta === 'string') {
-    meta = { name: meta }
+    meta = {
+      name: meta,
+      state: states.PLAY
+    }
   }
-  realClient.write(meta.name, data)
-  const id = Object.keys(toClientMappings).find(key => toClientMappings[key] === meta.name)
-  if (!noCallback) {
-    storedCallback('clientbound', meta, data, id) // TODO: indicator for injected packets
+
+  try {
+    realClient.write(meta.name, data)
+  } catch (error) {
+    return false
   }
+
+  const id = getMappingId(
+    toClientMappings,
+    meta.name
+  )
+
+  if (
+    !noCallback &&
+    typeof storedCallback === 'function'
+  ) {
+    storedCallback(
+      'clientbound',
+      meta,
+      data,
+      id,
+      true,
+      true
+    )
+  }
+
+  return true
 }
 
-exports.writeToServer = function (meta, data, noCallback) {
+exports.writeToServer = function (
+  meta,
+  data,
+  noCallback
+) {
+  if (!realServer) {
+    return false
+  }
+
   if (typeof meta === 'string') {
-    meta = { name: meta }
+    meta = {
+      name: meta,
+      state: states.PLAY
+    }
   }
-  realServer.write(meta.name, data)
-  const id = Object.keys(toServerMappings).find(key => toServerMappings[key] === meta.name)
-  if (!noCallback) {
-    storedCallback('serverbound', meta, data, id)
+
+  try {
+    realServer.write(meta.name, data)
+  } catch (error) {
+    return false
   }
+
+  const id = getMappingId(
+    toServerMappings,
+    meta.name
+  )
+
+  if (
+    !noCallback &&
+    typeof storedCallback === 'function'
+  ) {
+    storedCallback(
+      'serverbound',
+      meta,
+      data,
+      id,
+      true,
+      true
+    )
+  }
+
+  return true
 }
 
-exports.setScriptingEnabled = function (isEnabled) {
-  scriptingEnabled = isEnabled
+exports.setScriptingEnabled = function (
+  isEnabled
+) {
+  scriptingEnabled = Boolean(isEnabled)
 }

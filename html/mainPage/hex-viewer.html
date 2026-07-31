@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Packet hex</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: "PT Mono", Consolas, monospace;
+      background: #242424;
+      color: #e8e8e8;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: #242424;
+    }
+
+    pre {
+      box-sizing: border-box;
+      margin: 0;
+      min-width: max-content;
+      padding: 12px;
+      font: 13px/1.55 "PT Mono", Consolas, monospace;
+      white-space: pre;
+      tab-size: 4;
+    }
+
+    .offset {
+      color: #8ab4f8;
+    }
+
+    .ascii {
+      color: #a8c7a0;
+    }
+  </style>
+</head>
+<body>
+  <pre id="output">No packet selected.</pre>
+  <script>
+    const output = document.getElementById('output')
+
+    function toBytes (value) {
+      if (value instanceof ArrayBuffer) return new Uint8Array(value)
+      if (ArrayBuffer.isView(value)) {
+        return new Uint8Array(value.buffer, value.byteOffset, value.byteLength)
+      }
+      if (value && value.type === 'Buffer' && Array.isArray(value.data)) {
+        return Uint8Array.from(value.data)
+      }
+      if (Array.isArray(value)) return Uint8Array.from(value)
+      return new Uint8Array()
+    }
+
+    function escapeText (value) {
+      return value
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+    }
+
+    function formatBytes (bytes) {
+      if (bytes.length === 0) return 'No raw packet data.'
+
+      const offsetWidth = Math.max(4, (bytes.length - 1).toString(16).length)
+      const rows = []
+      for (let offset = 0; offset < bytes.length; offset += 16) {
+        const slice = bytes.slice(offset, offset + 16)
+        const hex = Array.from(slice, byte => byte.toString(16).padStart(2, '0').toUpperCase())
+          .join(' ')
+          .padEnd(47, ' ')
+        const ascii = Array.from(slice, byte => byte >= 32 && byte <= 126 ? String.fromCharCode(byte) : '.')
+          .join('')
+        rows.push(
+          `<span class="offset">${offset.toString(16).padStart(offsetWidth, '0').toUpperCase()}</span>  ` +
+          `${hex}  <span class="ascii">${escapeText(ascii)}</span>`
+        )
+      }
+      return rows.join('\n')
+    }
+
+    window.addEventListener('message', event => {
+      output.innerHTML = formatBytes(toBytes(event.data))
+    })
+  </script>
+</body>
+</html>

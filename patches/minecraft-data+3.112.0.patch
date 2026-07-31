@@ -1,0 +1,28 @@
+diff --git a/node_modules/minecraft-data/index.js b/node_modules/minecraft-data/index.js
+index 526dba1..8316f66 100644
+--- a/node_modules/minecraft-data/index.js
++++ b/node_modules/minecraft-data/index.js
+@@ -56,6 +56,11 @@ module.exports = function (mcVersion, preNetty) {
+   preNetty = preNetty || false
+   mcVersion = String(mcVersion).replace('pe_', 'bedrock_')
+ 
++  // Minecraft 26.2 is present in the protocol version index before its
++  // complete generated data is published. Reuse the 26.1 schema until then.
++  const compatibilityVersion = mcVersion === '26.2'
++  if (compatibilityVersion) mcVersion = '26.1'
++
+   const majorVersion = toMajor(mcVersion, preNetty)
+   if (majorVersion == null) { return null }
+   const cachedName = `${majorVersion.type}_${majorVersion.majorVersion}_${majorVersion.dataVersion}`
+@@ -67,6 +72,11 @@ module.exports = function (mcVersion, preNetty) {
+   nmcData.isNewerOrEqualTo = version => nmcData.version['>='](version)
+   nmcData.isOlderThan = version => nmcData.version['<'](version)
+   nmcData.version = Object.assign(majorVersion, nmcData.version)
++  if (compatibilityVersion) {
++    nmcData.version.minecraftVersion = '26.2'
++    nmcData.version.majorVersion = '26.2'
++    nmcData.version.version = 776
++  }
+   cache[cachedName] = nmcData
+   nmcData.supportFeature = supportFeature(nmcData.version, protocolVersions[nmcData.type])
+   return nmcData
