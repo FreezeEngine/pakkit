@@ -1,7 +1,13 @@
 exports.packetFilteredByFilterBox = function (packet, filter, hiddenPackets, inverseFiltering, regexFilter,
   sharedVars) {
-  if(!hiddenPackets) return false;
-  if (hiddenPackets[packet.direction].includes(packet.meta.name)) {
+  if (!packet || !hiddenPackets) return false
+  const direction = packet.direction || ''
+  const meta = packet.meta || {}
+  const packetName = meta.name === undefined ? 'unknown' : String(meta.name)
+  const hiddenForDirection = Array.isArray(hiddenPackets[direction])
+    ? hiddenPackets[direction]
+    : []
+  if (hiddenForDirection.includes(packetName)) {
     return true
   }
 
@@ -9,7 +15,13 @@ exports.packetFilteredByFilterBox = function (packet, filter, hiddenPackets, inv
     return false
   }
 
-  const comparisonString = packet.hexIdString + ' ' + packet.meta.name + ' ' + JSON.stringify(packet.data)
+  let packetData
+  try {
+    packetData = JSON.stringify(packet.data)
+  } catch (err) {
+    packetData = String(packet.data)
+  }
+  const comparisonString = String(packet.hexIdString || '') + ' ' + packetName + ' ' + packetData
 
   if (regexFilter && typeof filter === 'string') {
     try {
@@ -36,5 +48,5 @@ exports.packetFilteredByFilterBox = function (packet, filter, hiddenPackets, inv
 }
 
 exports.packetCollapsed = function (packet, filter, hiddenPackets) {
-  return packet.meta.name === 'position'
+  return Boolean(packet && packet.meta && packet.meta.name === 'position')
 }

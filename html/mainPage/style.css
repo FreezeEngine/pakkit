@@ -262,10 +262,32 @@ input.filter {
   width: 100%;
 }
 
+input.packet-type-filter {
+  margin-bottom: 8px;
+}
+
 #iframe, #hex-viewer {
   border: 0;
   width: 100%;
   height: 100%;
+}
+#tree {
+  position: relative;
+}
+
+#tree .jsontree_tree {
+  padding-top: 38px;
+}
+
+.data-actions {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  z-index: 2;
+}
+
+.data-actions button {
+  padding: 4px 10px;
 }
 
 div.error {

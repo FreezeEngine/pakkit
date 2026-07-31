@@ -21,11 +21,13 @@ function wrappedClusterizeUpdate (htmlArray) {
   sharedVars.hiddenPacketsAmount = 0
   const newArray = []
   for (const item of htmlArray) {
+    const row = Array.isArray(item) ? item[0] : item
+    if (typeof row !== 'string') continue
     // If the packet is hidden
-    if (item[0].match(/<li .* class=".*filter-hidden.*">/)) {
+    if (row.match(/<li .* class=".*filter-hidden.*">/)) {
       sharedVars.hiddenPacketsAmount += 1
     } else {
-      newArray.push(item)
+      newArray.push(row)
     }
   }
   clusterize.update(newArray)
@@ -86,17 +88,20 @@ function updateFiltering () {
     }
   }
   sharedVars.allPacketsHTML.forEach(function (item, index, array) {
-    if (!filteringLogic.packetFilteredByFilterBox(sharedVars.allPackets[index],
+    const packet = sharedVars.allPackets[index]
+    const row = Array.isArray(item) ? item[0] : item
+    if (!packet || typeof row !== 'string') return
+    if (!filteringLogic.packetFilteredByFilterBox(packet,
           regexFilter ? regex : sharedVars.lastFilter,
           sharedVars.hiddenPackets,
           inverseFiltering,
           regexFilter,
           sharedVars)) {
       // If it's hidden, show it
-      array[index] = [item[0].replace('filter-hidden', 'filter-shown')]
+      array[index] = [row.replace('filter-hidden', 'filter-shown')]
     } else {
       // If it's shown, hide it
-      array[index] = [item[0].replace('filter-shown', 'filter-hidden')]
+      array[index] = [row.replace('filter-shown', 'filter-hidden')]
     }
   })
   wrappedClusterizeUpdate(sharedVars.allPacketsHTML)
@@ -230,6 +235,16 @@ sharedVars.settings.setup(sharedVars)
 
 // TODO: move to own file
 const filteringPackets = document.getElementById('filtering-packets')
+const filteringSearch = document.getElementById('filtering-search')
+
+window.updateFilteringPacketSearch = function () {
+  const query = filteringSearch.value.trim().toLowerCase()
+
+  for (const item of filteringPackets.children) {
+    const matches = query === '' || item.textContent.toLowerCase().includes(query)
+    item.style.display = matches ? '' : 'none'
+  }
+}
 
 function updateFilteringStorage () {
   setVersionSpecificVar('hiddenPackets', sharedVars.hiddenPackets)
@@ -288,6 +303,7 @@ window.updateFilteringPackets = () => {
 }
 
 window.updateFilteringPackets()
+window.updateFilteringPacketSearch()
 
 // Update every 0.05 seconds
 // TODO: Find a better way without updating on every packet (which causes lag)
@@ -406,7 +422,7 @@ sharedVars.ipcRenderer.on('editAndResend', (event, arg) => {
 })
 
 function deselectPacket () {
-  if (currentPacket) {
+  if (currentPacket !== undefined) {
     removeOrAddSelection(currentPacket, false)
   }
   currentPacket = undefined
@@ -415,7 +431,11 @@ function deselectPacket () {
   document.body.classList.remove('packetSelected')
   document.body.classList.add('noPacketSelected')
   hexViewer.style.display = 'none'
+  const copyButton = document.getElementById('copy-data-button')
+  if (copyButton) copyButton.disabled = true
 }
+
+window.deselectPacket = deselectPacket
 
 window.clearPackets = function () { // window. stops standardjs from complaining
   deselectPacket()
@@ -436,8 +456,14 @@ window.showAllPackets = function () { // window. stops standardjs from complaini
 const hexViewer = document.getElementById('hex-viewer')
 
 function removeOrAddSelection (id, add) {
+  if (!Number.isInteger(id) || !sharedVars.allPacketsHTML[id]) return false
+  const row = Array.isArray(sharedVars.allPacketsHTML[id])
+    ? sharedVars.allPacketsHTML[id][0]
+    : sharedVars.allPacketsHTML[id]
+  if (typeof row !== 'string') return false
   const fakeElement = document.createElement('div')
-  fakeElement.innerHTML = sharedVars.allPacketsHTML[id][0]
+  fakeElement.innerHTML = row
+  if (!fakeElement.firstChild) return false
   if (add) {
     fakeElement.firstChild.classList.add('selected')
   } else {
@@ -447,9 +473,12 @@ function removeOrAddSelection (id, add) {
 
   wrappedClusterizeUpdate(sharedVars.allPacketsHTML)
   clusterize.refresh()
+  return true
 }
 
 window.packetClick = function (id) { // window. stops standardjs from complaining
+  if (!Number.isInteger(id) || !sharedVars.allPackets[id]) return
+  const packet = sharedVars.allPackets[id]
   // Remove selection background from old selected packet
   if (currentPacket !== undefined) {
     removeOrAddSelection(currentPacket, false)
@@ -457,20 +486,22 @@ window.packetClick = function (id) { // window. stops standardjs from complainin
 
   currentPacket = id
   // const element = document.getElementById('packet' + id)
-  currentPacketType = sharedVars.allPackets[id].name
+  currentPacketType = packet.name || (packet.meta && packet.meta.name)
   removeOrAddSelection(currentPacket, true)
   document.body.classList.remove('noPacketSelected')
   document.body.classList.add('packetSelected')
   if (sharedVars.proxyCapabilities.jsonData) {
     // sidebar.innerHTML = '<div style="padding: 10px;">Loading packet data...</div>';
-    if (sharedVars.allPackets[id].data === undefined) {
+    if (packet.data === undefined) {
       sharedVars.packetDom.getTreeElement().firstElementChild.innerHTML = 'Could not parse packet'
       // TODO: Error message
     } else {
-      sharedVars.packetDom.getTree().loadData(sharedVars.allPackets[id].data)
+      sharedVars.packetDom.getTree().loadData(packet.data)
     }
   } else {
-    sharedVars.packetDom.getTreeElement().innerText = sharedVars.allPackets[id].data.data
+    sharedVars.packetDom.getTreeElement().innerText = packet.data && packet.data.data !== undefined
+      ? packet.data.data
+      : 'Could not parse packet'
     sharedVars.packetDom.getTreeElement().style = `
     color: #0F0;
     white-space: pre;
@@ -479,10 +510,13 @@ window.packetClick = function (id) { // window. stops standardjs from complainin
     display: block;`
   }
 
-  if (sharedVars.proxyCapabilities.rawData) {
+  if (sharedVars.proxyCapabilities.rawData && packet.raw) {
     hexViewer.style.display = 'block'
-    hexViewer.contentWindow.postMessage(Buffer.from(sharedVars.allPackets[id].raw))
+    hexViewer.contentWindow.postMessage(Buffer.from(packet.raw), '*')
   }
+
+  const copyButton = document.getElementById('copy-data-button')
+  if (copyButton) copyButton.disabled = false
 
   scrollWikiToCurrentPacket()
 }
@@ -663,14 +697,165 @@ function scrollWikiToCurrentPacket () {
     }
   }
 }
+window.saveLogRunning = false
 
-function saveLog() {
-  sharedVars.ipcRenderer.send('saveLog', JSON.stringify(sharedVars.allPackets))
+async function saveLog () {
+  if (window.saveLogRunning) {
+    console.warn('Save is already running')
+    return
+  }
+
+  window.saveLogRunning = true
+
+  const CHUNK_SIZE = 2000
+  const saveButton = document.getElementById('save-log-button')
+
+  let sessionId = null
+  let finished = false
+
+  if (saveButton) {
+    saveButton.disabled = true
+    saveButton.innerText = 'Saving...'
+  }
+
+  try {
+    const startResult = await sharedVars.ipcRenderer.invoke(
+      'startSaveLog'
+    )
+
+    if (startResult.canceled) {
+      return
+    }
+
+    if (startResult.busy) {
+      alert('A save operation is already running')
+      return
+    }
+
+    sessionId = startResult.sessionId
+
+    const totalPackets = sharedVars.allPackets.length
+
+    console.log(
+      `Starting save of ${totalPackets} packets`
+    )
+
+    for (
+      let index = 0;
+      index < totalPackets;
+      index += CHUNK_SIZE
+    ) {
+      const chunk = sharedVars.allPackets.slice(
+        index,
+        Math.min(index + CHUNK_SIZE, totalPackets)
+      )
+
+      const result = await sharedVars.ipcRenderer.invoke(
+        'appendSaveLogChunk',
+        {
+          sessionId,
+          packets: chunk
+        }
+      )
+
+      const percent = totalPackets === 0
+        ? 100
+        : Math.floor(
+            result.packetCount / totalPackets * 100
+          )
+
+      if (saveButton) {
+        saveButton.innerText =
+          `Saving... ${percent}% (${result.packetCount}/${totalPackets})`
+      }
+
+      console.log(
+        `Saved ${result.packetCount}/${totalPackets}`
+      )
+    }
+
+    const finishResult =
+      await sharedVars.ipcRenderer.invoke(
+        'finishSaveLog',
+        {
+          sessionId
+        }
+      )
+
+    finished = true
+    sessionId = null
+
+    console.log(
+      `Saved ${finishResult.packetCount} packets to ${finishResult.filePath}`
+    )
+  } catch (err) {
+    console.error('Failed to save packet log:', err)
+
+    if (sessionId && !finished) {
+      try {
+        await sharedVars.ipcRenderer.invoke(
+          'cancelSaveLog',
+          {
+            sessionId
+          }
+        )
+      } catch (cancelError) {
+        console.error(
+          'Failed to cancel packet log save:',
+          cancelError
+        )
+      }
+    }
+
+    alert(`Failed to save packet log: ${err.message}`)
+  } finally {
+    window.saveLogRunning = false
+
+    if (saveButton) {
+      saveButton.disabled = false
+      saveButton.innerText = 'Save to file'
+    }
+  }
 }
 
-function loadLog() {
-  sharedVars.ipcRenderer.send('loadLog', '')
+window.loadLogRunning = false
+window.activeLoadId = null
+
+async function loadLog () {
+  if (window.loadLogRunning) {
+    console.warn('Load is already running')
+    return
+  }
+
+  window.loadLogRunning = true
+
+  try {
+    const result = await sharedVars.ipcRenderer.invoke(
+      'startLoadLog'
+    )
+
+    if (result.canceled) {
+      window.loadLogRunning = false
+      return
+    }
+
+    if (result.busy) {
+      window.loadLogRunning = false
+      alert('A log load is already running')
+      return
+    }
+
+    window.activeLoadId = result.loadId
+  } catch (err) {
+    window.loadLogRunning = false
+    window.activeLoadId = null
+
+    console.error(err)
+    alert(`Could not load log: ${err.message}`)
+  }
 }
+
+window.loadLog = loadLog
 
 function saveScript( newfile = true ) {
   if (newfile) {
@@ -682,4 +867,23 @@ function saveScript( newfile = true ) {
 
 function loadScript() {
   sharedVars.ipcRenderer.send('loadScript', '')
+}
+
+window.copyCurrentPacketData = function () {
+  if (currentPacket === undefined || !sharedVars.allPackets[currentPacket]) return
+  const packet = sharedVars.allPackets[currentPacket]
+  const data = sharedVars.proxyCapabilities.jsonData
+    ? sharedVars.packetDom.serializeData(packet.data, 2)
+    : packet.data && packet.data.data !== undefined
+      ? String(packet.data.data)
+      : ''
+  sharedVars.ipcRenderer.send('copyToClipboard', data)
+  const copyButton = document.getElementById('copy-data-button')
+  if (copyButton) {
+    const originalText = copyButton.innerText
+    copyButton.innerText = 'Copied'
+    setTimeout(() => {
+      copyButton.innerText = originalText
+    }, 900)
+  }
 }

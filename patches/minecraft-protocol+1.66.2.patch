@@ -1,0 +1,61 @@
+diff --git a/node_modules/minecraft-protocol/src/client.js b/node_modules/minecraft-protocol/src/client.js
+--- a/node_modules/minecraft-protocol/src/client.js
++++ b/node_modules/minecraft-protocol/src/client.js
+@@ -53,6 +53,7 @@ class Client extends EventEmitter {
+     })
+ 
+     this.splitter.recognizeLegacyPing = state === states.HANDSHAKING
++    let deserializerErrorReported = false
+ 
+     this.serializer.on('error', (e) => {
+       let parts
+@@ -68,6 +69,8 @@ class Client extends EventEmitter {
+     })
+ 
+     this.deserializer.on('error', (e) => {
++      if (deserializerErrorReported) return
++      deserializerErrorReported = true
+       let parts = []
+       if (e.field) {
+         parts = e.field.split('.')
+diff --git a/node_modules/minecraft-protocol/src/client/encrypt.js b/node_modules/minecraft-protocol/src/client/encrypt.js
+index 63cc2bd..1b95f5d 100644
+--- a/node_modules/minecraft-protocol/src/client/encrypt.js
++++ b/node_modules/minecraft-protocol/src/client/encrypt.js
+@@ -23,6 +23,7 @@ module.exports = function (client, options) {
+         joinServerRequest(onJoinServerResponse)
+       } else {
+         if (packet.serverId !== '-') {
++          client.emit('noAuth')
+           debug('This server appears to be an online server and you are providing no password, the authentication will probably fail')
+         }
+         sendEncryptionKeyResponse()
+diff --git a/node_modules/minecraft-protocol/src/server/login.js b/node_modules/minecraft-protocol/src/server/login.js
+index ec40ed9..9f7cad2 100644
+--- a/node_modules/minecraft-protocol/src/server/login.js
++++ b/node_modules/minecraft-protocol/src/server/login.js
+@@ -223,6 +223,13 @@ module.exports = function (client, server, options) {
+ 
+   function onClientLoginAck () {
+     client.state = states.CONFIGURATION
++    if (options.disableDefaultConfiguration) {
++      client.once('finish_configuration', () => {
++        client.state = states.PLAY
++        server.emit('playerJoin', client)
++      })
++      return
++    }
+     if (client.supportFeature('segmentedRegistryCodecData')) {
+       for (const key in options.registryCodec) {
+         const entry = options.registryCodec[key]
+diff --git a/node_modules/minecraft-protocol/src/version.js b/node_modules/minecraft-protocol/src/version.js
+index 51312c2..5ccad63 100644
+--- a/node_modules/minecraft-protocol/src/version.js
++++ b/node_modules/minecraft-protocol/src/version.js
+@@ -2,5 +2,5 @@
+ 
+ module.exports = {
+   defaultVersion: '1.21.11',
+-  supportedVersions: ['1.7', '1.8.8', '1.9.4', '1.10.2', '1.11.2', '1.12.2', '1.13.2', '1.14.4', '1.15.2', '1.16.5', '1.17.1', '1.18.2', '1.19', '1.19.2', '1.19.3', '1.19.4', '1.20', '1.20.1', '1.20.2', '1.20.4', '1.20.6', '1.21.1', '1.21.3', '1.21.4', '1.21.5', '1.21.6', '1.21.8', '1.21.9', '1.21.11']
++  supportedVersions: ['1.7', '1.8.8', '1.9.4', '1.10.2', '1.11.2', '1.12.2', '1.13.2', '1.14.4', '1.15.2', '1.16.5', '1.17.1', '1.18.2', '1.19', '1.19.2', '1.19.3', '1.19.4', '1.20', '1.20.1', '1.20.2', '1.20.4', '1.20.6', '1.21.1', '1.21.3', '1.21.4', '1.21.5', '1.21.6', '1.21.8', '1.21.9', '1.21.11', '26.2']
+ }

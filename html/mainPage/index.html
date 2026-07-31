@@ -90,7 +90,10 @@
         <div id="extendedPresets">
         </div>
         <br><br>
-        <div class="box" style="height: calc(100% - 118px);">
+        <input class="filter packet-type-filter" id="filtering-search"
+               oninput="updateFilteringPacketSearch()"
+               placeholder="Search packet name or ID" type="search">
+        <div class="box" style="height: calc(100% - 154px);">
             <ul class="packetlist" id="filtering-packets">
 
             </ul>
@@ -151,7 +154,7 @@
                 <iframe id="iframe"></iframe>
             </div>
             <div class="tabcontent tabcontent-rightpanel" id="hex" style="height: 100%; padding: 0px; overflow: hidden;">
-                <iframe id="hex-viewer" src="../hex-viewer/hex-viewer.html" style="display: none;"></iframe>
+                <iframe id="hex-viewer" src="./hex-viewer.html" style="display: none;"></iframe>
             </div>
         </div>
     </div>
